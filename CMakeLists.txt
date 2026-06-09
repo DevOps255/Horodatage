@@ -7,4 +7,5 @@ add_executable(horodatage main.cpp
         TimeManager.h
         TimeManger.cpp
         FileManager.h
+        FileManager.cpp
 )

@@ -1,10 +1,12 @@
 #include <iostream>
 #include "TimeManager.h"
 #include <string>
+#include "FileManager.h"
 
 int main() {
 
     int YearInput, MonthInput, DayInput, HourInput, MinuteInput;
+    std::string path;
 
 
     std::cout <<"salut!!!!!! alors si votre prof vous a donné un devoir et vous n'avez plus le droit de le modifier,\n"
@@ -28,10 +30,28 @@ int main() {
 
     std::cout <<"OK!! tout as été enregistré\n";
 
+    std::cout <<"Entrez le chemin complet du fichier à modifier:\n";
+    std::cin >> path;
+
     //conversion du format systemtime au format binaire filetime
 
     FILETIME BinaryTime = ConvertToMachineTime(YearInput, MonthInput, DayInput, HourInput, MinuteInput);
+    HANDLE file = OpenFileHandle(path);
+    if (file == INVALID_HANDLE_VALUE) {
+        std::cerr<<"Accès refusé!\n";
+        return 1;
+    }
 
+    if (!SetFileTime(file, &BinaryTime, &BinaryTime, &BinaryTime)) {
+        std::cerr << "Erreur lors de la mise à jour des dates du fichier.\n";
+        CloseHandle(file);
+        return 1;
+    }
+
+    std::cout << "Horodatage modifié avec succès.\n";
+    CloseHandle(file);
+
+    return 0;
 
 
 
