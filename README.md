@@ -1,76 +1,208 @@
 # Horodatage
+# horodatage
 
-Horodatage is a small Windows-focused C++ command-line project designed to work with file timestamp metadata. The current implementation prompts the user for a target date and time, converts that input into the native Windows `FILETIME` format, and provides the foundation for applying custom creation, last access, and last modification timestamps to files.
+> Modifier les métadonnées temporelles d'un fichier Windows depuis la ligne de commande — date de création, dernier accès, dernière modification.
 
-## Features
+---
 
-- Interactive command-line input for year, month, day, hour, and minute values.
-- Conversion from user-friendly date and time values to Windows `FILETIME`.
-- Windows API integration through `SYSTEMTIME`, `FILETIME`, and file handle primitives.
-- CMake-based project setup using C++20.
-- Initial file-management interface prepared for opening file handles.
+## Ce que ça fait
 
-## Project Structure
+Tu rentres un chemin de fichier et une date. Le programme ouvre le fichier, traduit ta date au format que Windows comprend réellement (un entier de 64 bits comptant les intervalles de 100 nanosecondes depuis le 1er janvier 1601), et réécrit les trois timestamps simultanément sur le disque.
 
-```text
-.
-|-- CMakeLists.txt     # CMake build configuration
-|-- main.cpp           # Console entry point and user input flow
-|-- TimeManager.h      # Timestamp conversion API declaration
-|-- TimeManger.cpp     # Timestamp conversion implementation
-|-- FileManager.h      # File handle API declaration
-|-- README.md          # Project documentation
+```
+Entrez le chemin complet du fichier à modifier:
+C:\Users\hp\Documents\rapport.pdf
+
+Entrez l'année que vous voulez remplacer : 2024
+Entrez le mois que vous voulez remplacer (1-12) : 06
+Entrez le jour que vous voulez remplacer (1-30) : 15
+Entrez l'heure que vous voulez modifier (0-23) : 14
+Entrez la minute que vous voulez modifier (0-59) : 30
+
+OK!! tout as été enregistré
 ```
 
-## Requirements
+---
 
-- Windows operating system
-- C++20-compatible compiler
-- CMake 4.2 or newer, as declared by the project configuration
-- A development environment such as CLion, Visual Studio, or a terminal with CMake available
+## Prérequis
 
-## Build
+- Windows 10 ou supérieur
+- CMake 4.x
+- Un compilateur C++ compatible MSVC ou MinGW (le projet utilise `<windows.h>`)
 
-From the project root:
+---
+
+## Installation
 
 ```bash
-cmake -S . -B cmake-build-debug
-cmake --build cmake-build-debug
+git clone https://github.com/ton-username/horodatage.git
+cd horodatage
 ```
-
-The generated executable is named `horodatage`.
-
-## Usage
-
-Run the executable and enter the requested date and time fields when prompted:
 
 ```bash
-./horodatage
+mkdir cmake-build-debug
+cd cmake-build-debug
+cmake ..
+cmake --build .
 ```
 
-The program asks for:
+L'exécutable `horodatage.exe` apparaît dans `cmake-build-debug/`.
 
-- Year
-- Month
-- Day
-- Hour
-- Minute
+---
 
-It then converts the provided values into a Windows `FILETIME` value that can be used with Windows file timestamp APIs.
+## Utilisation
 
-## Current Status
+```bash
+./horodatage.exe
+```
 
-This project is an early-stage implementation. Timestamp conversion is implemented, while the complete file update workflow is still in progress. The `FileManager.h` interface declares a file-opening function, but the corresponding implementation and timestamp application logic still need to be added before the program can modify real file metadata.
+Le programme est interactif — il te demande le chemin du fichier puis la date souhaitée champ par champ.
 
-## Planned Improvements
+> **Note :** Le fichier cible doit exister. Le programme ne crée pas de fichier, il modifie uniquement les métadonnées d'un fichier existant.
 
-- Implement `OpenFileHandle`.
-- Ask the user for a target file path.
-- Apply the generated `FILETIME` value to creation, last access, and last modification timestamps.
-- Add validation for user input ranges.
-- Improve error handling for invalid dates and Windows API failures.
-- Add a clear success or failure message after timestamp updates.
+---
 
-## Notes
+## Structure du projet
 
-Because this project uses Windows-specific APIs, it is not portable to Linux or macOS without replacing the timestamp and file-handle logic with platform-specific alternatives.
+```
+horodatage/
+├── CMakeLists.txt
+├── README.md
+├── main.cpp              # Point d'entrée — saisie utilisateur + orchestration
+├── TimeManager.h         # Déclaration de ConvertToMachineTime()
+├── TimeManager.cpp       # Conversion SYSTEMTIME → FILETIME via l'API Windows
+├── FileManager.h         # Déclaration de OpenFileHandle()
+└── FileManager.cpp       # Ouverture du fichier avec les bons flags d'accès
+```
+
+Chaque module a une seule responsabilité :
+
+- **TimeManager** — traduit une date humaine (année, mois, jour, heure, minute) en `FILETIME`, le format 64 bits qu'exige le noyau Windows
+- **FileManager** — ouvre le fichier avec `CreateFileA` en mode `FILE_WRITE_ATTRIBUTES` + `OPEN_EXISTING`, retourne un `HANDLE` valide ou signale l'erreur
+- **main** — collecte les entrées utilisateur, appelle les deux modules, exécute `SetFileTime`, ferme le handle
+
+---
+
+## Comment ça marche
+
+### 1. La saisie
+
+`main.cpp` collecte le chemin du fichier et les 5 champs de la date (année, mois, jour, heure, minute) via `std::cin`.
+
+### 2. La conversion — `TimeManager`
+
+Windows n'accepte pas une date au format humain pour écrire dans le système de fichiers NTFS. Il faut passer par deux structures :
+
+- `SYSTEMTIME` — la représentation lisible : année, mois, jour, heure, minute, seconde, milliseconde
+- `FILETIME` — un entier de 64 bits. Il compte les intervalles de 100 nanosecondes écoulés depuis le **1er janvier 1601** (début du cycle grégorien de 400 ans choisi par les architectes de Windows NT)
+
+La fonction `SystemTimeToFileTime()` fait la traduction. C'est le pont entre les deux mondes.
+
+```cpp
+// TimeManager.cpp
+FILETIME ConvertToMachineTime(const int year, const int month, const int day,
+                               const int hour, const int minute) {
+    SYSTEMTIME systime;
+    systime.wMilliseconds = 0;
+    systime.wSecond       = 0;
+    systime.wDayOfWeek    = 0;
+
+    systime.wYear   = year;
+    systime.wMonth  = month;
+    systime.wDay    = day;
+    systime.wHour   = hour;
+    systime.wMinute = minute;
+
+    FILETIME ft;
+    if (const bool convert = SystemTimeToFileTime(&systime, &ft); !convert) {
+        std::cerr << "Erreur lors de la conversion\n";
+    }
+    return ft;
+}
+```
+
+### 3. L'ouverture du fichier — `FileManager`
+
+Pour modifier les métadonnées d'un fichier, Windows exige un accès spécifique. Pas `GENERIC_WRITE` (qui donne accès au contenu) — uniquement `FILE_WRITE_ATTRIBUTES`.
+
+```cpp
+// FileManager.cpp
+HANDLE OpenFileHandle(const std::string &fileName) {
+    const HANDLE hFile = CreateFileA(
+        fileName.c_str(),
+        FILE_WRITE_ATTRIBUTES,   // accès aux métadonnées uniquement
+        FILE_SHARE_READ,         // d'autres processus peuvent lire en parallèle
+        nullptr,
+        OPEN_EXISTING,           // le fichier doit exister
+        FILE_ATTRIBUTE_NORMAL,
+        nullptr
+    );
+
+    if (hFile == INVALID_HANDLE_VALUE) {
+        std::cerr << "Error opening file " << fileName << std::endl;
+    }
+    return hFile;
+}
+```
+
+### 4. L'écriture — `SetFileTime`
+
+`SetFileTime` prend le handle et trois pointeurs vers des `FILETIME` — un pour la date de création, un pour le dernier accès, un pour la dernière modification. On passe la même valeur pour les trois.
+
+```cpp
+// main.cpp (extrait)
+FILETIME BinaryTime = ConvertToMachineTime(YearInput, MonthInput, DayInput,
+                                            HourInput, MinuteInput);
+HANDLE file = OpenFileHandle(path);
+
+if (file == INVALID_HANDLE_VALUE) {
+    std::cerr << "Accès refusé!\n";
+    return 1;
+}
+
+if (!SetFileTime(file, &BinaryTime, &BinaryTime, &BinaryTime)) {
+    std::cerr << "Erreur lors de la mise à jour des dates du fichier.\n";
+    CloseHandle(file);
+    return 1;
+}
+
+std::cout << "Horodatage modifié avec succès.\n";
+CloseHandle(file);
+```
+
+---
+
+## Ce qui arrive si ça échoue
+
+| Situation | Message affiché | Cause probable |
+|---|---|---|
+| Fichier introuvable | `Error opening file <chemin>` | Le chemin est incorrect ou le fichier n'existe pas |
+| Accès refusé | `Accès refusé!` | Droits insuffisants — relancer en administrateur |
+| Conversion échouée | `Erreur lors de la conversion` | Date invalide (ex: mois 13, jour 32) |
+| Écriture échouée | `Erreur lors de la mise à jour des dates du fichier.` | Fichier verrouillé par un autre processus |
+
+---
+
+## Limitations actuelles
+
+- Windows uniquement (`<windows.h>`)
+- Les chemins avec espaces doivent être entourés de guillemets
+- Les secondes et millisecondes sont fixées à `0`
+- Pas encore d'interface graphique
+
+---
+
+## Roadmap
+
+- [ ] Support des chemins avec espaces sans guillemets
+- [ ] Option pour modifier un seul timestamp au lieu des trois
+- [ ] Meilleure validation des entrées (date invalide, chemin vide)
+- [ ] Interface graphique cross-platform avec Flutter + FFI
+
+---
+
+## Contexte
+
+Ce projet est né d'une question posée en cours : comment modifierait-on la date de modification d'un fichier si on en avait besoin ? Trois fonctions de l'API Windows plus tard — `GetFileTime`, `SystemTimeToFileTime`, `SetFileTime` — le script Python de 10 lignes est devenu un projet C++ structuré avec modules, CMake, et gestion d'erreurs.
+
+---
